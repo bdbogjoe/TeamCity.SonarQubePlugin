@@ -8,9 +8,6 @@
     <packaging>pom</packaging>
     <properties>
         <teamcity-version>9.1.3</teamcity-version>
-        <sonar.plugin.version>${project.version}</sonar.plugin.version>
-        <sonar.plugin.vendor>Fipsoft / JetBrains</sonar.plugin.vendor>
-        <sonar.plugin.vendorUrl>http://teamcity.jetbrains.co</sonar.plugin.vendorUrl>
     </properties>
     <repositories>
         <repository>
