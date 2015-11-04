@@ -130,10 +130,11 @@ public class SQRBuildService extends CommandLineBuildService {
             if (match) {
                 out.add(new Version(m.group(1)));
             }
-            getLogger().message("Found jar : " + j + ", match : " + match);
         }
         if (out.isEmpty()) {
             throw new SQRJarException("No sonar runner jar found from " + classpath);
+        } else if (out.size() > 1) {
+            throw new SQRJarException("Multiple sonar runner jar found from " + classpath);
         }
         return out.last();
     }
@@ -287,9 +288,9 @@ public class SQRBuildService extends CommandLineBuildService {
             throw new SQRJarException("Cannot read SonarQube Runner lib path: " + libPath.getAbsolutePath());
         }
 
-        final File[] jars = libPath.listFiles(new FilenameFilter() {
+        final SortedMap<Version, String> runnerJars = new TreeMap<>();
 
-            private boolean found;
+        File[] jars = libPath.listFiles(new FilenameFilter() {
 
             public boolean accept(File dir, String name) {
                 boolean out = name.toLowerCase().endsWith(".jar");
@@ -297,20 +298,30 @@ public class SQRBuildService extends CommandLineBuildService {
                     getLogger().message("Found jar : " + name);
                     Matcher m = PATTERN_SONAR_RUNNER_JAR.matcher(name);
                     if (m.find()) {
-                        if (found) {
-                            out = false;
-                        } else {
-                            Version jarVersion = new Version(m.group(1));
-                            out = matchRequiredSonarRunnerVersion(jarVersion, accessor);
-                            if (out) {
-                                found = true;
-                            }
+                        Version jarVersion = new Version(m.group(1));
+                        out = matchRequiredSonarRunnerVersion(jarVersion, accessor);
+                        if (out) {
+                            runnerJars.put(jarVersion, new File(dir, name).getAbsolutePath());
                         }
                     }
                 }
                 return out;
             }
         });
+        if (runnerJars.size() > 1) {
+            //Multiple versions compatible, using last one
+            Collection<File> tmp = new ArrayList<>();
+            //Removing last version from set
+            runnerJars.remove(runnerJars.lastKey());
+            Set<String> toRemove = new HashSet<>(runnerJars.values());
+            //Removing older versions from list of jars
+            for (File f : jars) {
+                if (!toRemove.remove(f.getAbsolutePath())) {
+                    tmp.add(f);
+                }
+            }
+            jars = tmp.toArray(new File[tmp.size()]);
+        }
         if (jars.length == 0) {
             throw new SQRJarException("No JAR files found in lib path for server version " + getServerVersion(accessor) + ": " + libPath);
         }
