@@ -9,6 +9,8 @@ import jetbrains.buildServer.agent.runner.ProgramCommandLine;
 import jetbrains.buildServer.runner.JavaRunnerConstants;
 import org.apache.commons.httpclient.HttpClient;
 import org.apache.commons.httpclient.HttpMethod;
+import org.apache.commons.httpclient.UsernamePasswordCredentials;
+import org.apache.commons.httpclient.auth.AuthScope;
 import org.apache.commons.httpclient.methods.GetMethod;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -76,6 +78,7 @@ public class SQRBuildService extends CommandLineBuildService {
             InputStream is = null;
             try {
                 HttpClient client = new HttpClient();
+                client.getState().setCredentials(AuthScope.ANY, new UsernamePasswordCredentials(accessor.getLogin(), accessor.getPassword()));
                 HttpMethod m = new GetMethod(url.toString());
                 int result = client.executeMethod(m);
                 if (result == 200) {
