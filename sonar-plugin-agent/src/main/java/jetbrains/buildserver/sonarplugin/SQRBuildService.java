@@ -79,7 +79,9 @@ public class SQRBuildService extends CommandLineBuildService {
             try {
                 HttpClient client = new HttpClient();
                 client.getState().setCredentials(AuthScope.ANY, new UsernamePasswordCredentials(accessor.getLogin(), accessor.getPassword()));
+                client.getParams().setAuthenticationPreemptive(true);
                 HttpMethod m = new GetMethod(url.toString());
+                m.setDoAuthentication(true);
                 int result = client.executeMethod(m);
                 if (result == 200) {
                     try {
@@ -149,7 +151,6 @@ public class SQRBuildService extends CommandLineBuildService {
         allParameters.putAll(getBuild().getSharedConfigParameters());
         final SQRParametersAccessor accessor = new SQRParametersAccessor(allParameters);
 
-
         JavaCommandLineBuilder builder = new JavaCommandLineBuilder();
         builder.setJavaHome(getRunnerContext().getRunnerParameters().get(JavaRunnerConstants.TARGET_JDK_HOME));
         builder.setWorkingDir(getBuild().getCheckoutDirectory().getAbsolutePath());
@@ -195,7 +196,7 @@ public class SQRBuildService extends CommandLineBuildService {
         final List<String> res = new LinkedList<String>();
         Version serverVersion = getServerVersion(accessor);
         addSQRArg(res, "-Dsonar.host.url", accessor.getHostUrl());
-        if (serverVersion.compareTo(VERSION_5_2) < 0) {
+        if (serverVersion == null || serverVersion.compareTo(VERSION_5_2) < 0) {
             addSQRArg(res, "-Dsonar.jdbc.url", accessor.getJDBCUrl());
             addSQRArg(res, "-Dsonar.jdbc.username", accessor.getJDBCUsername());
             addSQRArg(res, "-Dsonar.jdbc.password", accessor.getJDBCPassword());
