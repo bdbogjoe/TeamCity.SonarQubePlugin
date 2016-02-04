@@ -153,7 +153,6 @@ public class SQRBuildService extends CommandLineBuildService {
 
         JavaCommandLineBuilder builder = new JavaCommandLineBuilder();
         builder.setJavaHome(getRunnerContext().getRunnerParameters().get(JavaRunnerConstants.TARGET_JDK_HOME));
-        builder.setWorkingDir(getBuild().getCheckoutDirectory().getAbsolutePath());
 
         String classpath = getClasspath(accessor);
         Version runnerVersion = findRunnerVersion(classpath);
@@ -195,6 +194,10 @@ public class SQRBuildService extends CommandLineBuildService {
     private List<String> composeSQRArgs(@NotNull final SQRParametersAccessor accessor, Map<String, String> sharedConfigParameters) throws SQRJarException {
         final List<String> res = new LinkedList<String>();
         Version serverVersion = getServerVersion(accessor);
+        final Map<String, String> allParameters = new HashMap<String, String>(runnerParameters);
+        allParameters.putAll(sharedConfigParameters);
+        final SQRParametersAccessor accessor = new SQRParametersAccessor(allParameters);
+        addSQRArg(res, "-Dproject.home", ".");
         addSQRArg(res, "-Dsonar.host.url", accessor.getHostUrl());
         if (serverVersion == null || serverVersion.compareTo(VERSION_5_2) < 0) {
             addSQRArg(res, "-Dsonar.jdbc.url", accessor.getJDBCUrl());
@@ -275,7 +278,11 @@ public class SQRBuildService extends CommandLineBuildService {
      * @throws SQRJarException
      */
     @NotNull
+<<<<<<< HEAD
     private File[] getSQRJar(final @NotNull SQRParametersAccessor accessor, final @NotNull File sqrRoot) throws SQRJarException {
+=======
+    private File[] getSQRJar(@NotNull final File sqrRoot) throws SQRJarException {
+>>>>>>> upstream/master
         final String path = getRunnerContext().getConfigParameters().get(SQR_RUNNER_PATH_PROPERTY);
         File baseDir;
         if (path != null) {
