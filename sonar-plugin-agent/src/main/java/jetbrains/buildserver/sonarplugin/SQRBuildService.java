@@ -1,5 +1,16 @@
 package jetbrains.buildserver.sonarplugin;
 
+import javax.xml.parsers.SAXParser;
+import javax.xml.parsers.SAXParserFactory;
+import java.io.File;
+import java.io.FilenameFilter;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.MalformedURLException;
+import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 import jetbrains.buildServer.RunBuildException;
 import jetbrains.buildServer.agent.plugins.beans.PluginDescriptor;
 import jetbrains.buildServer.agent.runner.CommandLineBuildService;
@@ -17,17 +28,6 @@ import org.jetbrains.annotations.Nullable;
 import org.xml.sax.Attributes;
 import org.xml.sax.SAXException;
 import org.xml.sax.helpers.DefaultHandler;
-
-import javax.xml.parsers.SAXParser;
-import javax.xml.parsers.SAXParserFactory;
-import java.io.File;
-import java.io.FilenameFilter;
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.MalformedURLException;
-import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Created by Andrey Titov on 4/3/14.
@@ -54,100 +54,10 @@ public class SQRBuildService extends CommandLineBuildService {
         mySonarProcessListener = sonarProcessListener;
     }
 
-    /**
-     * Adds argument only if it's value is not null
-     *
-     * @param argList Result list of arguments
-     * @param key     Argument key
-     * @param value   Argument value
-     */
-    protected static void addSQRArg(@NotNull final List<String> argList, @NotNull final String key, @Nullable final String value) {
-        if (!Util.isEmpty(value)) {
-            argList.add(key + "=" + value);
-        }
-    }
-
-    private Version getServerVersion(SQRParametersAccessor accessor) {
-        if (serverVersion == null) {
-            String host = accessor.getHostUrl();
-            StringBuilder url = new StringBuilder(host);
-            if (!host.endsWith("/")) {
-                url.append("/");
-            }
-            url.append("/api/properties/").append(SONAR_CORE_VERSION).append("?format=xml");
-            InputStream is = null;
-            try {
-                HttpClient client = new HttpClient();
-                client.getState().setCredentials(AuthScope.ANY, new UsernamePasswordCredentials(accessor.getLogin(), accessor.getPassword()));
-                client.getParams().setAuthenticationPreemptive(true);
-                HttpMethod m = new GetMethod(url.toString());
-                m.setDoAuthentication(true);
-                int result = client.executeMethod(m);
-                if (result == 200) {
-                    try {
-                        SAXParserFactory parserFactor = SAXParserFactory.newInstance();
-                        SAXParser parser = parserFactor.newSAXParser();
-                        SonarServerPropertiesHandler handler = new SonarServerPropertiesHandler();
-                        parser.parse(m.getResponseBodyAsStream(), handler);
-                        serverVersion = new Version(handler.properties.get(SONAR_CORE_VERSION));
-                    } catch (Exception e) {
-                        getLogger().buildFailureDescription("Unable to parse xml result to get version from : " + url);
-                    }
-                } else {
-                    getLogger().buildFailureDescription("Unable to connect to server (http " + result + ") to get version from : " + url);
-                }
-            } catch (MalformedURLException e) {
-                getLogger().buildFailureDescription("Unable to use url : " + url);
-            } catch (IOException e) {
-                getLogger().buildFailureDescription("Unable to connect to server to get version from : " + url);
-            } finally {
-                if (is != null) {
-                    try {
-                        is.close();
-                    } catch (IOException ioe) {
-                        //Nothing to do
-                    }
-                }
-            }
-        }
-        return serverVersion;
-    }
-
-
-    private boolean matchRequiredSonarRunnerVersion(Version version, SQRParametersAccessor accessor) {
-        Version serverVersion = getServerVersion(accessor);
-        boolean out = true;
-        if (serverVersion != null) {
-            if (serverVersion.compareTo(VERSION_5_2) >= 0) {
-                out = version.compareTo(VERSION_2_5) >= 0;
-            } else {
-                out = version.compareTo(VERSION_2_4) <= 0;
-            }
-        }
-        return out;
-    }
-
-    private Version findRunnerVersion(String classpath) throws SQRJarException {
-        SortedSet<Version> out = new TreeSet<>();
-        for (String j : classpath.split("" + File.pathSeparatorChar)) {
-            Matcher m = PATTERN_SONAR_RUNNER_JAR.matcher(j.trim());
-            boolean match = m.find();
-            if (match) {
-                out.add(new Version(m.group(1)));
-            }
-        }
-        if (out.isEmpty()) {
-            throw new SQRJarException("No sonar runner jar found from " + classpath);
-        } else if (out.size() > 1) {
-            throw new SQRJarException("Multiple sonar runner jar found from " + classpath);
-        }
-        return out.last();
-    }
-
     @NotNull
     @Override
     public ProgramCommandLine makeProgramCommandLine() throws RunBuildException {
-        final Map<String, String> allParameters = new HashMap<String, String>(getRunnerContext().getRunnerParameters());
+        final Map<String, String> allParameters = new HashMap<>(getRunnerContext().getRunnerParameters());
         allParameters.putAll(getBuild().getSharedConfigParameters());
         final SQRParametersAccessor accessor = new SQRParametersAccessor(allParameters);
 
@@ -186,17 +96,45 @@ public class SQRBuildService extends CommandLineBuildService {
     }
 
     /**
+     * @return Classpath for SonarQube Runner
+     * @throws SQRJarException
+     */
+    @NotNull
+    private String getClasspath(final @NotNull SQRParametersAccessor accessor) throws SQRJarException {
+        final File pluginJar[] = getSQRJar(accessor, myPluginDescriptor.getPluginRoot());
+        final StringBuilder builder = new StringBuilder();
+        for (final File file : pluginJar) {
+            builder.append(file.getAbsolutePath()).append(File.pathSeparatorChar);
+        }
+        return builder.substring(0, builder.length() - 1);
+    }
+
+    private Version findRunnerVersion(String classpath) throws SQRJarException {
+        SortedSet<Version> out = new TreeSet<>();
+        for (String j : classpath.split("" + File.pathSeparatorChar)) {
+            Matcher m = PATTERN_SONAR_RUNNER_JAR.matcher(j.trim());
+            boolean match = m.find();
+            if (match) {
+                out.add(new Version(m.group(1)));
+            }
+        }
+        if (out.isEmpty()) {
+            throw new SQRJarException("No sonar runner jar found from " + classpath);
+        } else if (out.size() > 1) {
+            throw new SQRJarException("Multiple sonar runner jar found from " + classpath);
+        }
+        return out.last();
+    }
+
+    /**
      * Composes SonarQube Runner arguments.
      *
      * @param accessor Parameters to compose arguments from
      * @return List of arguments to be passed to the SQR
      */
     private List<String> composeSQRArgs(@NotNull final SQRParametersAccessor accessor, Map<String, String> sharedConfigParameters) throws SQRJarException {
-        final List<String> res = new LinkedList<String>();
+        final List<String> res = new LinkedList<>();
         Version serverVersion = getServerVersion(accessor);
-        final Map<String, String> allParameters = new HashMap<String, String>(runnerParameters);
-        allParameters.putAll(sharedConfigParameters);
-        final SQRParametersAccessor accessor = new SQRParametersAccessor(allParameters);
         addSQRArg(res, "-Dproject.home", ".");
         addSQRArg(res, "-Dsonar.host.url", accessor.getHostUrl());
         if (serverVersion == null || serverVersion.compareTo(VERSION_5_2) < 0) {
@@ -235,54 +173,13 @@ public class SQRBuildService extends CommandLineBuildService {
         return res;
     }
 
-    @Nullable
-    private String collectReportsPath(Set<String> collectedReports, String projectModules) {
-        StringBuilder sb = new StringBuilder();
-        final String[] modules = projectModules != null ? projectModules.split(",") : new String[0];
-        Set<String> filteredReports = new HashSet<String>();
-        for (String report : collectedReports) {
-            if (!new File(report).exists()) continue;
-            for (String module : modules) {
-                final int indexOf = report.indexOf(module);
-                if (indexOf > 0) {
-                    report = report.substring(indexOf + module.length() + 1);
-                }
-            }
-            filteredReports.add(report);
-        }
-
-        for (String report : filteredReports) {
-            sb.append(report).append(',');
-            break; // At the moment sonar.junit.reportsPath doesn't accept several paths
-        }
-        return sb.length() > 0 ? sb.substring(0, sb.length() - 1) : null;
-    }
-
-    /**
-     * @return Classpath for SonarQube Runner
-     * @throws SQRJarException
-     */
-    @NotNull
-    private String getClasspath(final @NotNull SQRParametersAccessor accessor) throws SQRJarException {
-        final File pluginJar[] = getSQRJar(accessor, myPluginDescriptor.getPluginRoot());
-        final StringBuilder builder = new StringBuilder();
-        for (final File file : pluginJar) {
-            builder.append(file.getAbsolutePath()).append(File.pathSeparatorChar);
-        }
-        return builder.substring(0, builder.length() - 1);
-    }
-
     /**
      * @param sqrRoot SQR root directory
      * @return SonarQube Runner jar location
      * @throws SQRJarException
      */
     @NotNull
-<<<<<<< HEAD
     private File[] getSQRJar(final @NotNull SQRParametersAccessor accessor, final @NotNull File sqrRoot) throws SQRJarException {
-=======
-    private File[] getSQRJar(@NotNull final File sqrRoot) throws SQRJarException {
->>>>>>> upstream/master
         final String path = getRunnerContext().getConfigParameters().get(SQR_RUNNER_PATH_PROPERTY);
         File baseDir;
         if (path != null) {
@@ -339,8 +236,103 @@ public class SQRBuildService extends CommandLineBuildService {
         return jars;
     }
 
+    private Version getServerVersion(SQRParametersAccessor accessor) {
+        if (serverVersion == null) {
+            String host = accessor.getHostUrl();
+            StringBuilder url = new StringBuilder(host);
+            if (!host.endsWith("/")) {
+                url.append("/");
+            }
+            url.append("/api/properties/").append(SONAR_CORE_VERSION).append("?format=xml");
+            InputStream is = null;
+            try {
+                HttpClient client = new HttpClient();
+                client.getState().setCredentials(AuthScope.ANY, new UsernamePasswordCredentials(accessor.getLogin(), accessor.getPassword()));
+                client.getParams().setAuthenticationPreemptive(true);
+                HttpMethod m = new GetMethod(url.toString());
+                m.setDoAuthentication(true);
+                int result = client.executeMethod(m);
+                if (result == 200) {
+                    try {
+                        SAXParserFactory parserFactor = SAXParserFactory.newInstance();
+                        SAXParser parser = parserFactor.newSAXParser();
+                        SonarServerPropertiesHandler handler = new SonarServerPropertiesHandler();
+                        parser.parse(m.getResponseBodyAsStream(), handler);
+                        serverVersion = new Version(handler.properties.get(SONAR_CORE_VERSION));
+                    } catch (Exception e) {
+                        getLogger().buildFailureDescription("Unable to parse xml result to get version from : " + url);
+                    }
+                } else {
+                    getLogger().buildFailureDescription("Unable to connect to server (http " + result + ") to get version from : " + url);
+                }
+            } catch (MalformedURLException e) {
+                getLogger().buildFailureDescription("Unable to use url : " + url);
+            } catch (IOException e) {
+                getLogger().buildFailureDescription("Unable to connect to server to get version from : " + url);
+            } finally {
+                if (is != null) {
+                    try {
+                        is.close();
+                    } catch (IOException ioe) {
+                        //Nothing to do
+                    }
+                }
+            }
+        }
+        return serverVersion;
+    }
+
+    /**
+     * Adds argument only if it's value is not null
+     *
+     * @param argList Result list of arguments
+     * @param key     Argument key
+     * @param value   Argument value
+     */
+    protected static void addSQRArg(@NotNull final List<String> argList, @NotNull final String key, @Nullable final String value) {
+        if (!Util.isEmpty(value)) {
+            argList.add(key + "=" + value);
+        }
+    }
+
+    @Nullable
+    private String collectReportsPath(Set<String> collectedReports, String projectModules) {
+        StringBuilder sb = new StringBuilder();
+        final String[] modules = projectModules != null ? projectModules.split(",") : new String[0];
+        Set<String> filteredReports = new HashSet<>();
+        for (String report : collectedReports) {
+            if (!new File(report).exists()) continue;
+            for (String module : modules) {
+                final int indexOf = report.indexOf(module);
+                if (indexOf > 0) {
+                    report = report.substring(indexOf + module.length() + 1);
+                }
+            }
+            filteredReports.add(report);
+        }
+
+        for (String report : filteredReports) {
+            sb.append(report).append(',');
+            break; // At the moment sonar.junit.reportsPath doesn't accept several paths
+        }
+        return sb.length() > 0 ? sb.substring(0, sb.length() - 1) : null;
+    }
+
+    private boolean matchRequiredSonarRunnerVersion(Version version, SQRParametersAccessor accessor) {
+        Version serverVersion = getServerVersion(accessor);
+        boolean out = true;
+        if (serverVersion != null) {
+            if (serverVersion.compareTo(VERSION_5_2) >= 0) {
+                out = version.compareTo(VERSION_2_5) >= 0;
+            } else {
+                out = version.compareTo(VERSION_2_4) <= 0;
+            }
+        }
+        return out;
+    }
+
     private static class SonarServerPropertiesHandler extends DefaultHandler {
-        Map<String, String> properties = new HashMap<String, String>();
+        Map<String, String> properties = new HashMap<>();
         String key;
         String value;
         StringBuilder content;
@@ -377,7 +369,7 @@ public class SQRBuildService extends CommandLineBuildService {
 
     public static class Version implements Comparable<Version> {
 
-        private String version;
+        private final String version;
 
         public Version(String version) {
             if (version == null)
@@ -387,8 +379,15 @@ public class SQRBuildService extends CommandLineBuildService {
             this.version = version;
         }
 
-        public final String get() {
-            return this.version;
+        @Override
+        public boolean equals(Object that) {
+            if (this == that)
+                return true;
+            if (that == null)
+                return false;
+            if (this.getClass() != that.getClass())
+                return false;
+            return this.compareTo((Version) that) == 0;
         }
 
         @Override
@@ -411,20 +410,13 @@ public class SQRBuildService extends CommandLineBuildService {
             return 0;
         }
 
-        @Override
-        public String toString() {
-            return get();
+        public final String get() {
+            return this.version;
         }
 
         @Override
-        public boolean equals(Object that) {
-            if (this == that)
-                return true;
-            if (that == null)
-                return false;
-            if (this.getClass() != that.getClass())
-                return false;
-            return this.compareTo((Version) that) == 0;
+        public String toString() {
+            return get();
         }
 
     }
